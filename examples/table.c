@@ -3,25 +3,25 @@
 @table(name, str) MyEnumTable
 {
     { A "A" }
-    { B "B" }
+    { B "Beau Gosse" }
     { C "C" }
 }
 
 typedef enum {
 @expand(MyEnumTable a)
-    `MyEnum_$(a.name),`
-MyEnum_Count
+`    MyEnum_$(a.name),`
+    MyEnum_Count
 } MyEnum;
 
 char *StringTable[MyEnum_Count] = {
-@expand(MyEnumTable a) `$(a.str),`
+@expand(MyEnumTable a)
+`    $(a.str),`
 };
-
 
 int
 main(int Argc, char *Args[])
 {
-    printf("%s\n", StringTable[MyEnum_B]);
+    printf("@: %s\n", StringTable[MyEnum_B]);
     
     return 0;
 }
