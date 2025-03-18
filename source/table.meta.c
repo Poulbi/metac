@@ -1,20 +1,18 @@
 #include <stdio.h>
 
-@table(name, str) MyEnumTable
-{
-    { A "A" }
-    { B "B" }
-    { C "C" }
-}
+
 
 typedef enum {
-@expand(MyEnumTable a)
-    `MyEnum_$(a.name),`
+MyEnum_A,
+MyEnum_B,
+MyEnum_C,
 MyEnum_Count
 } MyEnum;
 
 char *StringTable[MyEnum_Count] = {
-@expand(MyEnumTable a) `$(a.str),`
+"A",
+"B",
+"C",
 };
 
 

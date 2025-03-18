@@ -30,25 +30,40 @@ typedef int64_t  i64;
 #define true 1
 #define false 0
 
+///~ Misc macro's //////////////////////////////////////
+#define Assert(expr) if (!(expr)) { raise(SIGTRAP); }
+#define Kilobyte(byte) byte * 1024L
+#define Megabyte(byte) Kilobyte(byte) * 1024L
+#define Gigabyte(byte) Megabyte(byte) * 1024L
+#define internal static
+#define global_variable static
+#define local_persist static
+////////////////////////////////////////////////////////
+
+///~ String ////////////////////////////////////////////
 typedef struct {
     char *Memory;
     u64 Size;
 } s8;
-#define S8(str) { str, sizeof(str) - 1 }
 #define S8_LIT(str) str, sizeof(str) - 1
 #define S8_ARG(str) str.Memory, str.Size
+#define S8(str) { S8_LIT(str) }
+#define S8_FMT "Memory: %.5s Size: %lu"
+////////////////////////////////////////////////////////
 
-#define Assert(expr) if (!(expr)) { raise(SIGTRAP); }
-
-#define Kilobyte(byte) byte * 1024L
-#define Megabyte(byte) Kilobyte(byte) * 1024L
-#define Gigabyte(byte) Megabyte(byte) * 1024L
-
+///~ Arena /////////////////////////////////////////////
 typedef struct {
     char *Memory;
     u64 Pos;
     u64 Size;
 } arena;
+
+///~ Global variables /////////////////////////////////////////////
+// TODO: use meta program to generate Keywords table
+global_variable s8 TableKeyword = S8("table");
+global_variable s8 TableGenEnumKeyword = S8("table_gen_enum");
+global_variable s8 ExpandKeyword = S8("expand");
+////////////////////////////////////////////////////////
 
 char *
 ArenaPush(arena* Arena, i64 Size)
@@ -59,7 +74,9 @@ ArenaPush(arena* Arena, i64 Size)
     Assert(Arena->Pos <= Arena->Size);
     return Result;
 }
+////////////////////////////////////////////////////////
 
+///~ MetaC data structures /////////////////////////////
 typedef struct {
     s8 Name;
     i32 LabelsCount;
@@ -72,24 +89,19 @@ typedef struct {
     i32 Start;
     i32 End;
 } range;
+////////////////////////////////////////////////////////
 
 s8 ReadEntireFileIntoMemory(char *Filepath)
 {
-    i32 Ret = 0;
     i32 FD = 0;
     s8 Result = {0};
     struct stat StatBuffer = {0};
 
     FD = open(Filepath, O_RDONLY);
-    Assert(FD != -1);
     fstat(FD, &StatBuffer);
-    Assert(Ret != -1);
-    Result.Size = StatBuffer.st_size;
 
-    Result.Memory = mmap(0, Result.Size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0); 
-    Assert(Result.Memory);
-    Ret = read(FD, Result.Memory, Result.Size);
-    Assert(Ret != -1);
+    Result.Size = StatBuffer.st_size;
+    Result.Memory = mmap(0, Result.Size, PROT_READ | PROT_WRITE, MAP_PRIVATE, FD, 0); 
 
     return Result;
 }
@@ -155,13 +167,14 @@ main(int ArgC, char *Args[])
         .Size = Megabyte(1)
     };
     arena TablesArena = { 
-        .Memory = Storage + ScratchArena.Size,
+        .Memory = ScratchArena.Memory + ScratchArena.Size,
         .Pos = 0,
         .Size = Megabyte(1)
     };
     table *Tables = (table*)TablesArena.Memory;
     i32 TablesCount = 0;
-    char *Out = ScratchArena.Memory + TablesArena.Size;
+    char *Out = TablesArena.Memory + TablesArena.Size;
+    char *OutBase = Out;
 
     if (ArgC > 1)
     {
@@ -176,146 +189,149 @@ main(int ArgC, char *Args[])
 
     // NOTE(luca): The memory is assumed to stay mapped until program exits, because we will use
     // pointers into that memory.
-    s8 File = ReadEntireFileIntoMemory(Filename);
-    char *In = File.Memory;
+    s8 FileContents = ReadEntireFileIntoMemory(Filename);
+
+    if (!FileContents.Memory || (void*)FileContents.Memory == (void*)-1)
+    {
+        fprintf(stderr, "File '%s' could not be loaded into memory.\n", Filename);
+        return 1;
+    }
+
+    char *In = FileContents.Memory;
+    i64 InSize = FileContents.Size;
 
     for (i64 At = 0;
-         At < File.Size;
+         At < InSize;
          At++)
     {
         if (In[At] == '@')
         {
             At++;
             
-            s8 TableKeyword = S8("table");
-            s8 TableGenEnumKeyword = S8("table_gen_enum");
-            s8 ExpandKeyword = S8("expand");
-            s8 Keywords[] = { TableKeyword, TableGenEnumKeyword, ExpandKeyword };
-
             if (!strncmp(In + At, S8_ARG(ExpandKeyword)))
             {
-                i32 ExpressionAt             = 0;
+                table *ExpressionTable = 0;
                 s8 ExpressionTableName       = {0};
                 i32 ExpressionTableNameAt    = 0;
                 s8 ExpressionTableArgument    = {0};
                 i32 ExpressionTableArgumentAt = 0;
 
-                s8 ExpandArgument = {0};
-                i32 ExpandArgumentAt = 0;
-                s8 ExpandArgumentLabel = {0};
-                i32 ExpandArgumentLabelAt = 0;
-                range Expansion = {0};
-
                 At += ExpandKeyword.Size;
-                Assert(At < File.Size);
+                Assert(At < InSize);
                 Assert(In[At] == '(');
                 At++;
 
                 ExpressionTableNameAt = At;
-                while (!IsWhitespace(In[At]) && At < File.Size) At++;
-                Assert(At < File.Size);
+                while (!IsWhitespace(In[At]) && At < InSize) At++;
+                Assert(At < InSize);
                 ExpressionTableName.Memory = In + ExpressionTableNameAt;
                 ExpressionTableName.Size = At - ExpressionTableNameAt;
+                
+                for (i32 TableAt = 0;
+                     TableAt < TablesCount;
+                     TableAt++)
+                {
+                    if (!strncmp(Tables[TableAt].Name.Memory, ExpressionTableName.Memory, ExpressionTableName.Size))
+                    {
+                        ExpressionTable = Tables + TableAt;
+                        break;
+                    }
+                }
+                Assert(ExpressionTable);
 
-                while (IsWhitespace(In[At]) && At < File.Size) At++;
-                Assert(At < File.Size);
+                // TODO: not used yet
+                while (IsWhitespace(In[At]) && At < InSize) At++;
+                Assert(At < InSize);
                 ExpressionTableArgumentAt = At;
-                while (In[At] != ')' && At < File.Size) At++;
-                Assert(At < File.Size);
+                while (In[At] != ')' && At < InSize) At++;
+                Assert(At < InSize);
                 ExpressionTableArgument.Memory = In + ExpressionTableArgumentAt;
                 ExpressionTableArgument.Size = At - ExpressionTableArgumentAt;
                 At++;
 
-                while (IsWhitespace(In[At]) && At < File.Size) At++;
-                Assert(At < File.Size);
+                while (IsWhitespace(In[At]) && At < InSize) At++;
+                Assert(At < InSize);
                 Assert(In[At] == '`');
                 At++;
-                ExpressionAt = At;
 
-                // TODO: multiple expansions in one expression
-                while (In[At] != '`')
+                i32 ExpressionAt = At;
+                for (i32 ElementAt = 0;
+                     ElementAt < ExpressionTable->ElementsCount;
+                     ElementAt++)
                 {
-                    if (In[At] == '$' && In[At + 1] == '(')
+                    At = ExpressionAt;
+
+                    while (In[At] != '`' && At < InSize)
                     {
-                        Expansion.Start = At;
-                        At += 2;
-
-                        ExpandArgumentAt = At;
-                        while (In[At] != '.' && At < File.Size) At++;
-                        Assert(At < File.Size);
-                        ExpandArgument.Memory = In + ExpandArgumentAt;
-                        ExpandArgument.Size = At - ExpandArgumentAt;
-                        At++;
-
-                        ExpandArgumentLabelAt = At;
-                        while (In[At] != ')' && At < File.Size) At++;
-                        Assert(At < File.Size);
-                        ExpandArgumentLabel.Memory = In + ExpandArgumentLabelAt;
-                        ExpandArgumentLabel.Size = At - ExpandArgumentLabelAt;
-
-                        Expansion.End = At;
-                        At++;
-                        
-                        // ExpressionAt|            |   Start    |     End    |            |     At     |
-                        //                repeat              Labels              repeat
-
-                        table *CurrentTable = 0;
-                        for (i32 TableAt = 0;
-                             TableAt < TablesCount;
-                             TableAt++)
+                        while ((In[At] != '$' && In[At] != '`') && At < InSize) 
                         {
-                            if (!strncmp(Tables[TableAt].Name.Memory, S8_ARG(ExpressionTableName)))
+                            if (In[At] == '\\') At++;
+                            *Out++ = In[At++];
+                        }
+
+                        // TODO: allow escaping characters with '\'
+                        if (In[At] == '$' && In[At + 1] == '(')
+                        {
+                            At += 2;
+
+                            s8 ExpandArgument = {0};
+                            i32 ExpandArgumentAt = At;
+                            while (In[At] != '.' && At < InSize) At++;
+                            ExpandArgument.Memory = In + ExpandArgumentAt;
+                            ExpandArgument.Size = At - ExpandArgumentAt;
+                            Assert(!strncmp(ExpandArgument.Memory, ExpressionTableArgument.Memory, ExpandArgument.Size));
+                            At++;
+
+                            s8 ExpansionLabel = {0};
+                            i32 ExpansionLabelAt = At;
+                            while (In[At] != ')' && At < InSize) At++;
+                            Assert(At < InSize);
+                            ExpansionLabel.Memory = In + ExpansionLabelAt;
+                            ExpansionLabel.Size = At - ExpansionLabelAt;
+                            At++;
+
+                            i32 LabelIndex = -1;
+                            for (i32 LabelAt = 0;
+                                 LabelAt < ExpressionTable->LabelsCount;
+                                 LabelAt++)
                             {
-                                CurrentTable = Tables + TableAt;
-                                break;
+                                if (!strncmp(ExpansionLabel.Memory,
+                                             ExpressionTable->Labels[LabelAt].Memory,
+                                             ExpansionLabel.Size))
+                                {
+                                    LabelIndex = LabelAt;
+                                    break;
+                                }
                             }
-                        }
-                        Assert(CurrentTable);
+                            Assert(LabelIndex != -1);
 
-                        // TODO(now): Debug this
-                        i32 LabelIndex = -1;
-                        for (i32 LabelAt = 0;
-                             LabelAt < CurrentTable->LabelsCount;
-                             LabelAt++)
+                            s8 Expansion = ExpressionTable->Elements[ElementAt * ExpressionTable->LabelsCount + LabelIndex];
+                            memcpy(Out, Expansion.Memory, Expansion.Size);
+                            Out += Expansion.Size;
+                        }
+                        else if (In[At] == '`')
                         {
-                            if (!strncmp(CurrentTable->Labels[LabelAt].Memory, S8_ARG(ExpandArgumentLabel)))
-                            {
-                                LabelIndex = LabelAt;
-                                break;
-                            }
+                            // ERROR: When the last character is '`' does not print.
+                            *Out++ = '\n';
                         }
-                        Assert(LabelIndex != -1);
-
-                        // TODO(now): the bug
-
-                        while (In[At] != '`' && At < File.Size) At++;
-                        Assert(File.Size);
-
-                        for (i32 ElementAt = 0;
-                             ElementAt < CurrentTable->ElementsCount;
-                             ElementAt++)
+                        else
                         {
-                            s8 ExpansionText = CurrentTable->Elements[ElementAt * CurrentTable->LabelsCount + LabelIndex];
-                            write(STDOUT_FILENO, In + ExpressionAt, Expansion.Start - ExpressionAt);
-                            write(STDOUT_FILENO, S8_ARG(ExpansionText));
-                            write(STDOUT_FILENO, In + Expansion.End + 1, At - (Expansion.End + 1));
-                            write(STDOUT_FILENO, S8_LIT("\n"));
+                            *Out++ = In[At++];
                         }
 
-                        break;
                     }
 
-                    At++;
-                    Assert(At < File.Size);
                 }
+                Assert(At < InSize);
+
                 At++;
 
             }
             else if (!strncmp(In + At, TableGenEnumKeyword.Memory, TableGenEnumKeyword.Size))
             {
                 // TODO: not implemented yet
-                while (In[At] != '}' && At < File.Size) At++;
-                Assert(At < File.Size);
+                while (In[At] != '}' && At < InSize) At++;
+                Assert(At < InSize);
             }
             else if (!strncmp(In + At, TableKeyword.Memory, TableKeyword.Size))
             {
@@ -324,6 +340,8 @@ main(int ArgC, char *Args[])
                 s8* Labels        = 0;
                 i32 ElementsCount = 0;
                 s8* Elements      = 0;
+
+                Labels = (s8*)(ScratchArena.Memory + ScratchArena.Pos);
 
                 // Parse the labels
                 At += TableKeyword.Size;
@@ -343,13 +361,13 @@ main(int ArgC, char *Args[])
                         LabelsCount++;
 
                         At++;
-                        while (IsWhitespace(In[At]) && At < File.Size) At++;
-                        Assert(At < File.Size);
+                        while (IsWhitespace(In[At]) && At < InSize) At++;
+                        Assert(At < InSize);
                         CurrentLabelAt = At;
                     }
 
                     At++;
-                    Assert(At < File.Size);
+                    Assert(At < InSize);
                 }
 
                 if (BeginParenAt + 1 == At)
@@ -359,7 +377,6 @@ main(int ArgC, char *Args[])
                 }
                 else
                 {
-                    Labels = (s8*)(ScratchArena.Memory);
                     CurrentLabel = (s8*)ArenaPush(&ScratchArena, sizeof(*CurrentLabel));
                     CurrentLabel->Memory = In + CurrentLabelAt;
                     CurrentLabel->Size = At - CurrentLabelAt;
@@ -368,16 +385,16 @@ main(int ArgC, char *Args[])
 
                 // Parse table name
                 At++;
-                while (IsWhitespace(In[At]) && At < File.Size) At++;
-                Assert(At < File.Size);
+                while (IsWhitespace(In[At]) && At < InSize) At++;
+                Assert(At < InSize);
                 i32 TableNameAt = At;
-                while (!IsWhitespace(In[At]) && At < File.Size) At++;
-                Assert(At < File.Size);
+                while (!IsWhitespace(In[At]) && At < InSize) At++;
+                Assert(At < InSize);
                 TableName.Memory = In + TableNameAt;
                 TableName.Size = At - TableNameAt;
 
-                while (IsWhitespace(In[At]) && At < File.Size) At++;
-                Assert(At < File.Size);
+                while (IsWhitespace(In[At]) && At < InSize) At++;
+                Assert(At < InSize);
                 Assert(In[At] == '{');
                 At++;
                 
@@ -398,8 +415,8 @@ main(int ArgC, char *Args[])
 
                     while (!ShouldStop)
                     {
-                        while (IsWhitespace(In[At]) && At < File.Size) At++;
-                        Assert(At < File.Size);
+                        while (IsWhitespace(In[At]) && At < InSize) At++;
+                        Assert(At < InSize);
                         if (In[At] == '}')
                         {
                             ShouldStop = true;
@@ -415,8 +432,8 @@ main(int ArgC, char *Args[])
                                  LabelAt < LabelsCount;
                                  LabelAt++)
                             {
-                                while (IsWhitespace(In[At]) && At < File.Size) At++;
-                                Assert(At < File.Size);
+                                while (IsWhitespace(In[At]) && At < InSize) At++;
+                                Assert(At < InSize);
                                 CurrentElementAt = At;
 
                                 IsPair = true;
@@ -435,14 +452,14 @@ main(int ArgC, char *Args[])
                                           // same character to open and to close. We can also assume
                                           // that a label within an element must be a minimum of 1
                                           // character so skipping should be fine.
-                                    while (In[At] != PairChar && At < File.Size) At++;
-                                    Assert(At < File.Size);
+                                    while (In[At] != PairChar && At < InSize) At++;
+                                    Assert(At < InSize);
                                     At++;
                                 }
                                 else
                                 {
-                                    while (!IsWhitespace(In[At]) && At < File.Size) At++;
-                                    Assert(At < File.Size);
+                                    while (!IsWhitespace(In[At]) && At < InSize) At++;
+                                    Assert(At < InSize);
                                 }
                                                         
                                 CurrentElement[LabelAt].Memory = In + CurrentElementAt;
@@ -451,8 +468,8 @@ main(int ArgC, char *Args[])
                             ElementsCount++;
 
                             // Find end of element '}'
-                            while (IsWhitespace(In[At]) && At < File.Size) At++;
-                            Assert(At < File.Size);
+                            while (IsWhitespace(In[At]) && At < InSize) At++;
+                            Assert(At < InSize);
                             Assert(In[At] == '}');
                             At++;
                         }
@@ -470,16 +487,17 @@ main(int ArgC, char *Args[])
             else
             {
                 // ERROR: What if the code contains a non meta-"@_expand" tag ???
-                write(STDOUT_FILENO, In + At, 1);
+                *Out++ = In[At];
             }
 
         }
         else
         {
-            write(STDOUT_FILENO, In + At, 1);
+            *Out++ = In[At];
         }
     }
-
+    
+    write(STDOUT_FILENO, OutBase, Out - OutBase);
 
     return 0;
 }
