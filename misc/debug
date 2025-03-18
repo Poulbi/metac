@@ -1,3 +1,4 @@
 #!/bin/sh
 
-setsid gf2 ./meta > /dev/null 2>&1 
+ThisDir="$(dirname "$(readlink -f "$0")")"
+setsid gf2 "$ThisDir"/../build/metac > /dev/null 2>&1 
