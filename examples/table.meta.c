@@ -3,18 +3,14 @@
 
 
 typedef enum {
-MyEnum_A,
-MyEnum_B,
-MyEnum_C,
-MyEnum_Count
+    MyEnum_A, // "A"    MyEnum_B, // "Beau Gosse"    MyEnum_C, // "C"    MyEnum_Count
 } MyEnum;
 
 char *StringTable[MyEnum_Count] = {
-"A",
-"B",
-"C",
+    "A",
+    "Beau Gosse",
+    "C",
 };
-
 
 int
 main(int Argc, char *Args[])

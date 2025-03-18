@@ -180,12 +180,11 @@ main(int ArgC, char *Args[])
     {
         Filename = Args[1];
     }
-#if 1
     else
     {
-        Filename = "table.c";
+        fprintf(stderr, "Usage: %s [filename]\n", Args[0]);
+        return 1;
     }
-#endif
 
     // NOTE(luca): The memory is assumed to stay mapped until program exits, because we will use
     // pointers into that memory.
@@ -239,7 +238,6 @@ main(int ArgC, char *Args[])
                 }
                 Assert(ExpressionTable);
 
-                // TODO: not used yet
                 while (IsWhitespace(In[At]) && At < InSize) At++;
                 Assert(At < InSize);
                 ExpressionTableArgumentAt = At;
@@ -309,17 +307,13 @@ main(int ArgC, char *Args[])
                             memcpy(Out, Expansion.Memory, Expansion.Size);
                             Out += Expansion.Size;
                         }
-                        else if (In[At] == '`')
-                        {
-                            // ERROR: When the last character is '`' does not print.
-                            *Out++ = '\n';
-                        }
-                        else
+                        else if (In[At] != '`')
                         {
                             *Out++ = In[At++];
                         }
 
                     }
+                    *Out++ = '\n';
 
                 }
                 Assert(At < InSize);
@@ -486,7 +480,7 @@ main(int ArgC, char *Args[])
             }
             else
             {
-                // ERROR: What if the code contains a non meta-"@_expand" tag ???
+                *Out++ = '@';
                 *Out++ = In[At];
             }
 
