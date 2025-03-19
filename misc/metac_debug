@@ -1,0 +1,4 @@
+#!/bin/sh
+
+ThisDir="$(dirname "$(readlink -f "$0")")"
+setsid gf2 --args "$ThisDir"/../build/metac "$ThisDir"/../examples/table.c > /dev/null 2>&1 
