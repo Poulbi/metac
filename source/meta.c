@@ -4,20 +4,37 @@
  To-Do's
  - [ ] Error messages instead of asserts
        - Show byte offset to show where the errors happens in the file and highlight that.
+       Idea
+       - Print error
+       - exit
+       Problem what if inside function
+       - global variable error
+       When pushing new error do not overwrite
+       Since we have only fatal errors we could say there is only one global variable with the error contents.
+
+       Idea
+       - Error stack
+       - Push new errors on the stack along with a message
+       - Error location (byte offset in file)
+        -> Maybe pretty print this
+       - Error kinds (optional, first only fatal errors)
+       - After parse check if there are any (fatal) errors
+
  - [ ] Expanding over multiple tables
  - [ ] Syntactic sugar to specify array of single values ?
  - [ ] Preserve indent when expansion is on a new line
+ - [ ] Compress the code
 */
 
 
-#include <string.h>
-#include <unistd.h>
-#include <stdio.h>
-#include <sys/mman.h>
-#include <signal.h>
 #include <fcntl.h>
-#include <sys/stat.h>
+#include <signal.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 typedef uint8_t  u8;
 typedef uint16_t u16;
@@ -27,8 +44,8 @@ typedef int8_t   i8;
 typedef int16_t  i16;
 typedef int32_t  i32;
 typedef int64_t  i64;
-#define true 1
-#define false 0
+#define true     1
+#define false    0
 
 ///~ Misc macro's //////////////////////////////////////
 #define Assert(expr) if (!(expr)) { raise(SIGTRAP); }
@@ -89,6 +106,22 @@ typedef struct {
     i32 Start;
     i32 End;
 } range;
+
+global_variable char *ErrorMessage = 0;
+global_variable i32 ErrorLocation = 0;
+global_variable i32 ErrorAt;
+
+void
+Error(i32 Expr, char *Message, i32 Offset)
+{
+    if (!Expr && !ErrorMessage)
+    {
+        printf("%i: %s\n", Offset, Message);
+        ErrorMessage = Message;
+        ErrorLocation = Offset;
+    }
+}
+
 ////////////////////////////////////////////////////////
 
 s8 ReadEntireFileIntoMemory(char *Filepath)
@@ -112,46 +145,6 @@ IsWhitespace(char Ch)
     return(Ch == ' '  ||
            Ch == '\n' ||
            Ch == '\t');
-}
-
-void
-PrintTable(table Table)
-{
-    // TODO: Print the table
-    write(STDOUT_FILENO, S8_LIT("table("));
-    for (u32 LabelsAt = 0;
-         LabelsAt < Table.LabelsCount;
-         LabelsAt++)
-    {
-        s8 Label = Table.Labels[LabelsAt];
-        write(STDOUT_FILENO, Label.Memory, Label.Size);
-        if (LabelsAt + 1 < Table.LabelsCount)
-        {
-            write(STDOUT_FILENO, S8_LIT(", "));
-        }
-    }
-    write(STDOUT_FILENO, S8_LIT(") "));
-    write(STDOUT_FILENO, Table.Name.Memory, Table.Name.Size);
-    write(STDOUT_FILENO, S8_LIT("\n{\n"));
-    for (i32 ElementAt = 0;
-         ElementAt < Table.ElementsCount;
-         ElementAt++)
-    {
-        write(STDOUT_FILENO, S8_LIT("\t{ "));
-        for (i32 LabelAt = 0;
-             LabelAt < Table.LabelsCount;
-             LabelAt++)
-        {
-            s8 CurrentElement = Table.Elements[ElementAt * Table.LabelsCount + LabelAt]; 
-            write(STDOUT_FILENO, CurrentElement.Memory, CurrentElement.Size);
-            if (LabelAt + 1 < Table.LabelsCount)
-            {
-                write(STDOUT_FILENO, S8_LIT(" "));
-            }
-        }
-        write(STDOUT_FILENO, S8_LIT(" }\n"));
-    }
-    write(STDOUT_FILENO, S8_LIT("}\n"));
 }
 
 int
@@ -209,6 +202,8 @@ main(int ArgC, char *Args[])
             
             if (!strncmp(In + At, S8_ARG(ExpandKeyword)))
             {
+                Error(TablesCount > 0, "no tables defined", At);
+
                 table *ExpressionTable = 0;
                 s8 ExpressionTableName       = {0};
                 i32 ExpressionTableNameAt    = 0;
@@ -216,13 +211,15 @@ main(int ArgC, char *Args[])
                 i32 ExpressionTableArgumentAt = 0;
 
                 At += ExpandKeyword.Size;
-                Assert(At < InSize);
-                Assert(In[At] == '(');
+                Error(At < InSize, "expected '('", At);
+                Error(In[At] == '(', "expected '('", At);
                 At++;
 
+                while (IsWhitespace(In[At]) && At < InSize) At++;
                 ExpressionTableNameAt = At;
-                while (!IsWhitespace(In[At]) && At < InSize) At++;
-                Assert(At < InSize);
+                while (!IsWhitespace(In[At]) && In[At] != ')' && At < InSize) At++;
+                Error(At - ExpressionTableNameAt > 0, "table name required", ExpressionTableNameAt);
+                Error(At < InSize, "cannot parse table name", ExpressionTableNameAt);
                 ExpressionTableName.Memory = In + ExpressionTableNameAt;
                 ExpressionTableName.Size = At - ExpressionTableNameAt;
                 
@@ -236,96 +233,106 @@ main(int ArgC, char *Args[])
                         break;
                     }
                 }
-                Assert(ExpressionTable);
+                Error(ExpressionTable != 0, "undefined table name", ExpressionTableNameAt);
 
                 while (IsWhitespace(In[At]) && At < InSize) At++;
-                Assert(At < InSize);
+                Error(At < InSize, "expected argument name", At);
                 ExpressionTableArgumentAt = At;
+                ErrorAt = At;
                 while (In[At] != ')' && At < InSize) At++;
-                Assert(At < InSize);
+                Error(At > ExpressionTableArgumentAt, "argument name required", ExpressionTableArgumentAt);
+                Error(At < InSize, "expected ')'", ErrorAt);
                 ExpressionTableArgument.Memory = In + ExpressionTableArgumentAt;
                 ExpressionTableArgument.Size = At - ExpressionTableArgumentAt;
                 At++;
 
                 while (IsWhitespace(In[At]) && At < InSize) At++;
-                Assert(At < InSize);
-                Assert(In[At] == '`');
+                Error(At < InSize, "expected opening '`", At);
+                Error(In[At] == '`', "expected closing '`'", At);
                 At++;
 
-                i32 ExpressionAt = At;
-                for (i32 ElementAt = 0;
-                     ElementAt < ExpressionTable->ElementsCount;
-                     ElementAt++)
+                if (ExpressionTable)
                 {
-                    At = ExpressionAt;
-
-                    while (In[At] != '`' && At < InSize)
+                    i32 ExpressionAt = At;
+                    for (i32 ElementAt = 0;
+                         ElementAt < ExpressionTable->ElementsCount;
+                         ElementAt++)
                     {
-                        while ((In[At] != '$' && In[At] != '`') && At < InSize) 
+                        At = ExpressionAt;
+
+                        while (In[At] != '`' && At < InSize)
                         {
-                            if (In[At] == '\\') At++;
-                            *Out++ = In[At++];
-                        }
-
-                        // TODO: allow escaping characters with '\'
-                        if (In[At] == '$' && In[At + 1] == '(')
-                        {
-                            At += 2;
-
-                            s8 ExpandArgument = {0};
-                            i32 ExpandArgumentAt = At;
-                            while (In[At] != '.' && At < InSize) At++;
-                            ExpandArgument.Memory = In + ExpandArgumentAt;
-                            ExpandArgument.Size = At - ExpandArgumentAt;
-                            Assert(!strncmp(ExpandArgument.Memory, ExpressionTableArgument.Memory, ExpandArgument.Size));
-                            At++;
-
-                            s8 ExpansionLabel = {0};
-                            i32 ExpansionLabelAt = At;
-                            while (In[At] != ')' && At < InSize) At++;
-                            Assert(At < InSize);
-                            ExpansionLabel.Memory = In + ExpansionLabelAt;
-                            ExpansionLabel.Size = At - ExpansionLabelAt;
-                            At++;
-
-                            i32 LabelIndex = -1;
-                            for (i32 LabelAt = 0;
-                                 LabelAt < ExpressionTable->LabelsCount;
-                                 LabelAt++)
+                            while ((In[At] != '$' && In[At] != '`') && At < InSize) 
                             {
-                                if (!strncmp(ExpansionLabel.Memory,
-                                             ExpressionTable->Labels[LabelAt].Memory,
-                                             ExpansionLabel.Size))
-                                {
-                                    LabelIndex = LabelAt;
-                                    break;
-                                }
+                                if (In[At] == '\\') At++;
+                                *Out++ = In[At++];
                             }
-                            Assert(LabelIndex != -1);
 
-                            s8 Expansion = ExpressionTable->Elements[ElementAt * ExpressionTable->LabelsCount + LabelIndex];
-                            memcpy(Out, Expansion.Memory, Expansion.Size);
-                            Out += Expansion.Size;
+                            if (In[At] == '$' && In[At + 1] == '(')
+                            {
+                                At += 2;
+
+                                s8 ExpandArgument = {0};
+                                i32 ExpandArgumentAt = At;
+                                while (In[At] != '.' && At < InSize) At++;
+                                // NOTE(luca): to make errors even smarter we should stop searching at the
+                                // closing characters up one level. ')' in this case.
+                                Error(At < InSize, "expected '.'", ExpandArgumentAt);
+                                ExpandArgument.Memory = In + ExpandArgumentAt;
+                                ExpandArgument.Size = At - ExpandArgumentAt;
+                                Error(!strncmp(ExpandArgument.Memory, 
+                                               ExpressionTableArgument.Memory,
+                                               ExpandArgument.Size),
+                                      "argument name does not match defined one",
+                                      ExpandArgumentAt);
+                                At++;
+
+                                s8 ExpansionLabel = {0};
+                                i32 ExpansionLabelAt = At;
+                                while (In[At] != ')' && At < InSize) At++;
+                                Error(At < InSize, "expected ')'", ExpandArgumentAt - 1);
+                                ExpansionLabel.Memory = In + ExpansionLabelAt;
+                                ExpansionLabel.Size = At - ExpansionLabelAt;
+                                At++;
+
+                                i32 LabelIndex = -1;
+                                for (i32 LabelAt = 0;
+                                     LabelAt < ExpressionTable->LabelsCount;
+                                     LabelAt++)
+                                {
+                                    if (!strncmp(ExpansionLabel.Memory,
+                                                 ExpressionTable->Labels[LabelAt].Memory,
+                                                 ExpansionLabel.Size))
+                                    {
+                                        LabelIndex = LabelAt;
+                                        break;
+                                    }
+                                }
+                                Error(LabelIndex != -1, "undefined label", ExpansionLabelAt);
+
+                                s8 Expansion = ExpressionTable->Elements[ElementAt * ExpressionTable->LabelsCount + LabelIndex];
+                                memcpy(Out, Expansion.Memory, Expansion.Size);
+                                Out += Expansion.Size;
+                            }
+                            else if (In[At] != '`')
+                            {
+                                *Out++ = In[At++];
+                            }
+
                         }
-                        else if (In[At] != '`')
-                        {
-                            *Out++ = In[At++];
-                        }
+                        *Out++ = '\n';
 
                     }
-                    *Out++ = '\n';
+                    Error(At < InSize, "expected closing '`'", ExpressionAt - 1);
 
+                    At++;
                 }
-                Assert(At < InSize);
-
-                At++;
-
             }
             else if (!strncmp(In + At, TableGenEnumKeyword.Memory, TableGenEnumKeyword.Size))
             {
                 // TODO: not implemented yet
                 while (In[At] != '}' && At < InSize) At++;
-                Assert(At < InSize);
+                Error(At < InSize, "expected '}'", At);
             }
             else if (!strncmp(In + At, TableKeyword.Memory, TableKeyword.Size))
             {
@@ -339,13 +346,13 @@ main(int ArgC, char *Args[])
 
                 // Parse the labels
                 At += TableKeyword.Size;
-                Assert(In[At] == '(');
+                Error(In[At] == '(', "expected '('", At);
                 i32 BeginParenAt = At;
                 At++;
                 i32 CurrentLabelAt = At;
                 s8* CurrentLabel = 0;
 
-                while (In[At] != ')')
+                while (In[At] != ')' && At < InSize)
                 {
                     if (In[At] == ',')
                     {
@@ -356,117 +363,109 @@ main(int ArgC, char *Args[])
 
                         At++;
                         while (IsWhitespace(In[At]) && At < InSize) At++;
-                        Assert(At < InSize);
+                        Error(At < InSize, "expected next label", At);
                         CurrentLabelAt = At;
                     }
 
                     At++;
-                    Assert(At < InSize);
                 }
+                Error(At < InSize, "expected ')'", At);
 
-                if (BeginParenAt + 1 == At)
-                {
-                    Labels = 0;
-                    // ERROR: no labels?
-                }
-                else
+                if (BeginParenAt + 1 != At)
                 {
                     CurrentLabel = (s8*)ArenaPush(&ScratchArena, sizeof(*CurrentLabel));
                     CurrentLabel->Memory = In + CurrentLabelAt;
                     CurrentLabel->Size = At - CurrentLabelAt;
                     LabelsCount++;
                 }
+                Error(LabelsCount, "no labels defined", At);
 
                 // Parse table name
                 At++;
                 while (IsWhitespace(In[At]) && At < InSize) At++;
-                Assert(At < InSize);
+                Error(At < InSize, "expected table name", At);
                 i32 TableNameAt = At;
                 while (!IsWhitespace(In[At]) && At < InSize) At++;
-                Assert(At < InSize);
+                Error(At < InSize, "EOF while parsing table name", At);
                 TableName.Memory = In + TableNameAt;
                 TableName.Size = At - TableNameAt;
 
-                while (IsWhitespace(In[At]) && At < InSize) At++;
-                Assert(At < InSize);
-                Assert(In[At] == '{');
+                ErrorAt = At;
+                while (In[At] != '{' && At < InSize) At++;
+                Error(At < InSize, "expected '{'", ErrorAt);
                 At++;
                 
-                if (LabelsCount == 0)
-                {
-                    // ERROR: Table without labels?
-                } 
-                // TODO: syntactic sugar when LabelsCount is 1
-                else
-                {
-                    Elements = (s8*)(ScratchArena.Memory + ScratchArena.Pos);
+                Elements = (s8*)(ScratchArena.Memory + ScratchArena.Pos);
 
-                    i32 CurrentElementAt = 0;
-                    i32 ShouldStop = false;
-                    i32 IsPair = false;
-                    u8 PairChar = 0;
-                    s8* CurrentElement = 0;
+                i32 CurrentElementAt = 0;
+                i32 ShouldStop = false;
+                i32 IsPair = false;
+                u8 PairChar = 0;
+                s8* CurrentElement = 0;
 
-                    while (!ShouldStop)
+                while (!ShouldStop)
+                {
+                    while (IsWhitespace(In[At]) && At < InSize) At++;
+                    Error(At < InSize, "expected '}' or '{'", At);
+                    if (In[At] == '}')
                     {
-                        while (IsWhitespace(In[At]) && At < InSize) At++;
-                        Assert(At < InSize);
-                        if (In[At] == '}')
+                        ShouldStop = true;
+                    }
+                    else
+                    {
+                        Error(In[At] == '{', "expected '{'", At);
+                        At++;
+
+                        CurrentElement = (s8*)ArenaPush(&ScratchArena, sizeof(*CurrentElement) * LabelsCount);
+
+                        // Parse elements
+                        for (i32 LabelAt = 0;
+                             LabelAt < LabelsCount;
+                             LabelAt++)
                         {
-                            ShouldStop = true;
-                        }
-                        else
-                        {
-                            Assert(In[At] == '{');
-                            At++;
-
-                            CurrentElement = (s8*)ArenaPush(&ScratchArena, sizeof(*CurrentElement) * LabelsCount);
-
-                            for (i32 LabelAt = 0;
-                                 LabelAt < LabelsCount;
-                                 LabelAt++)
-                            {
-                                while (IsWhitespace(In[At]) && At < InSize) At++;
-                                Assert(At < InSize);
-                                CurrentElementAt = At;
-
-                                IsPair = true;
-                                switch (In[At])
-                                {
-                                case '\'': PairChar = '\''; break;
-                                case '"':  PairChar = '"';  break;
-                                case '(':  PairChar = ')';  break;
-                                case '{':  PairChar = '}';  break;
-                                case '[':  PairChar = ']';  break;
-                                default: IsPair = false; break;
-                                }   
-                                if (IsPair)
-                                {
-                                    At++; // NOTE(luca): We need to skip quotes because they are the
-                                          // same character to open and to close. We can also assume
-                                          // that a label within an element must be a minimum of 1
-                                          // character so skipping should be fine.
-                                    while (In[At] != PairChar && At < InSize) At++;
-                                    Assert(At < InSize);
-                                    At++;
-                                }
-                                else
-                                {
-                                    while (!IsWhitespace(In[At]) && At < InSize) At++;
-                                    Assert(At < InSize);
-                                }
-                                                        
-                                CurrentElement[LabelAt].Memory = In + CurrentElementAt;
-                                CurrentElement[LabelAt].Size = At - CurrentElementAt;
-                            }
-                            ElementsCount++;
-
-                            // Find end of element '}'
                             while (IsWhitespace(In[At]) && At < InSize) At++;
-                            Assert(At < InSize);
-                            Assert(In[At] == '}');
-                            At++;
+                            Error(At < InSize, "expected element label", At);
+                            CurrentElementAt = At;
+
+                            IsPair = true;
+                            switch (In[At])
+                            {
+                            case '\'': PairChar = '\''; break;
+                            case '"':  PairChar = '"';  break;
+                            case '(':  PairChar = ')';  break;
+                            case '{':  PairChar = '}';  break;
+                            case '[':  PairChar = ']';  break;
+                            default: IsPair = false; break;
+                            }   
+
+                            ErrorAt = At;
+                            // TODO: escape characters with '\'
+                            if (IsPair)
+                            {
+                                At++; // NOTE(luca): We need to skip quotes because they are the
+                                      // same character to open and to close. We can also assume
+                                      // that a label within an element must be a minimum of 1
+                                      // character so skipping should be fine.
+                                while (In[At] != PairChar && At < InSize) At++;
+                                At++;
+                            }
+                            else
+                            {
+                                ErrorAt = At;
+                                while (!IsWhitespace(In[At]) && At < InSize) At++;
+                            }
+                            Error(At < InSize, "EOF while parsing element label", ErrorAt);
+                                                    
+                            CurrentElement[LabelAt].Memory = In + CurrentElementAt;
+                            CurrentElement[LabelAt].Size = At - CurrentElementAt;
                         }
+                        ElementsCount++;
+
+                        // Find end of element '}'
+                        ErrorAt = At;
+                        while (In[At] != '}' && At < InSize) At++;
+                        Error(At < InSize, "expected '}'", ErrorAt);
+                        At++;
                     }
                 }
 
@@ -491,7 +490,14 @@ main(int ArgC, char *Args[])
         }
     }
     
-    write(STDOUT_FILENO, OutBase, Out - OutBase);
+    if (ErrorMessage)
+    {
+        // printf("%i: %s\n", ErrorLocation, ErrorMessage);
+    }
+    else
+    {
+        write(STDOUT_FILENO, OutBase, Out - OutBase);
+    }
 
     return 0;
 }
