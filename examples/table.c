@@ -3,7 +3,7 @@
 @table(name, str) MyEnumTable
 {
     { A "A" }
-    { B "Beau Gosse" }
+    { B "Beau gosse" }
     { C "C" }
 }
 
