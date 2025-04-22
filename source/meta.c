@@ -81,25 +81,28 @@ ArenaPop(arena *Arena, u64 Size)
 ////////////////////////////////////////////////////////
 
 ///~ MetaC data structures /////////////////////////////
-typedef struct {
+struct table {
     s8 Name;
     i32 LabelsCount;
     s8 *Labels;
     i32 ElementsCount;
     s8 *Elements;
-} table;
+};
+typedef struct table table;
 
-typedef struct {
+struct parse_result {
     u64 End;
     u64 Size;
     char *Data;
-} parse_result;
+};
+typedef struct parse_result parse_result;
 
-typedef struct {
+struct error {
     u64 At;
     u64 Size;
     char Message[];
-} error;
+};
+typedef struct error error;
 ////////////////////////////////////////////////////////
 
 ///~ Global variables /////////////////////////////////////////////
